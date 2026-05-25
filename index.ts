@@ -495,13 +495,38 @@ export default async function (pi: ExtensionAPI) {
         );
       }
 
-      // Step 6: Verify models load
+      // Step 6: Verify models load + register provider live
       try {
         const modelsRes = await fetch(`${url}/v1/models`, {
           headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
         });
-        const models = await modelsRes.json();
-        ctx.ui.notify(`✓ ${models.data?.length ?? 0} models available via 9router/`, "info");
+        const payload = await modelsRes.json() as {
+          data: Array<{ id: string; name?: string; context_window?: number; max_tokens?: number }>;
+        };
+        const modelCount = payload.data?.length ?? 0;
+        ctx.ui.notify(`✓ ${modelCount} models available via 9router/`, "info");
+
+        // Register provider live so models are available immediately (no restart needed)
+        if (apiKey && modelCount > 0) {
+          pi.registerProvider("9router", {
+            name: "9Router",
+            baseUrl: `${url}/v1`,
+            apiKey,
+            api: "openai-completions",
+            models: payload.data.map((model) => ({
+              id: model.id,
+              name: model.name ?? model.id,
+              reasoning: false,
+              input: ["text"] as ("text" | "image")[],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: model.context_window ?? 128000,
+              maxTokens: model.max_tokens ?? 4096,
+            })),
+          });
+          ctx.ui.notify("✓ 9router provider registered — models available now (no restart needed)", "info");
+        } else if (!apiKey) {
+          ctx.ui.notify("⚠ No API key set — restart pi to load 9router models after saving config", "error");
+        }
       } catch {
         ctx.ui.notify("⚠ Could not verify models endpoint", "error");
       }
