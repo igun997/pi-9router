@@ -204,7 +204,7 @@ export default async function (pi: ExtensionAPI) {
 
   // Tool: List providers with status
   pi.registerTool({
-    name: "9router_providers",
+    name: "ninerouter_providers",
     label: "9Router Providers",
     description:
       "List all 9Router provider connections with status, activity, and errors. Shows which accounts are active/inactive.",
@@ -242,7 +242,7 @@ export default async function (pi: ExtensionAPI) {
 
   // Tool: Check quota/usage for a provider
   pi.registerTool({
-    name: "9router_quota",
+    name: "ninerouter_quota",
     label: "9Router Quota",
     description:
       "Check quota/usage for a specific provider connection or all providers. Shows remaining credits, session limits, reset times.",
@@ -297,7 +297,7 @@ export default async function (pi: ExtensionAPI) {
 
   // Tool: Test a provider connection
   pi.registerTool({
-    name: "9router_test",
+    name: "ninerouter_test",
     label: "9Router Test",
     description: "Test a provider connection to check if it's working. Returns valid/error status.",
     parameters: Type.Object({
@@ -314,7 +314,7 @@ export default async function (pi: ExtensionAPI) {
 
   // Tool: Get model aliases
   pi.registerTool({
-    name: "9router_aliases",
+    name: "ninerouter_aliases",
     label: "9Router Aliases",
     description: "List model aliases configured in 9Router. Shows shorthand names mapped to full model paths.",
     parameters: Type.Object({}),
@@ -329,7 +329,7 @@ export default async function (pi: ExtensionAPI) {
 
   // Tool: Get router settings
   pi.registerTool({
-    name: "9router_settings",
+    name: "ninerouter_settings",
     label: "9Router Settings",
     description:
       "Get 9Router configuration: tunnel status, provider strategies, combo strategies, sticky limits.",
@@ -345,7 +345,7 @@ export default async function (pi: ExtensionAPI) {
 
   // Tool: Health check
   pi.registerTool({
-    name: "9router_health",
+    name: "ninerouter_health",
     label: "9Router Health",
     description: "Quick health check of the 9Router instance.",
     parameters: Type.Object({}),

@@ -93,12 +93,12 @@ Legacy names still work: `NINE_ROUTER_URL`, `NINE_ROUTER_API_KEY`.
 
 | Tool | Description |
 |------|-------------|
-| `9router_health` | Health check |
-| `9router_providers` | List all provider connections with status |
-| `9router_quota` | Check quota/usage (single or all providers) |
-| `9router_test` | Test a provider connection |
-| `9router_aliases` | List model alias shortcuts |
-| `9router_settings` | View router configuration |
+| `ninerouter_health` | Health check |
+| `ninerouter_providers` | List all provider connections with status |
+| `ninerouter_quota` | Check quota/usage (single or all providers) |
+| `ninerouter_test` | Test a provider connection |
+| `ninerouter_aliases` | List model alias shortcuts |
+| `ninerouter_settings` | View router configuration |
 
 ## Skills
 
