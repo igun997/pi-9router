@@ -437,20 +437,17 @@ export default async function (pi: ExtensionAPI) {
       }
 
       // Step 5: Show config summary
+      const envObj: Record<string, string> = { NINE_ROUTER_URL: url };
+      if (config.password) envObj.NINE_ROUTER_PASSWORD = config.password;
+      if (apiKey) envObj.NINE_ROUTER_API_KEY = apiKey;
+
       const envLines = [
         `NINE_ROUTER_URL=${url}`,
         config.password ? `NINE_ROUTER_PASSWORD=${config.password}` : null,
         apiKey ? `NINE_ROUTER_API_KEY=${apiKey}` : null,
       ].filter(Boolean);
 
-      const settingsJson = JSON.stringify(
-        {
-          packages: ["/home/nst/WebstormProjects/pi-9router"],
-          env: Object.fromEntries(envLines.map((l) => l!.split("=").slice(0, 1).concat(l!.split("=").slice(1).join("=")))),
-        },
-        null,
-        2
-      );
+      const settingsJson = JSON.stringify({ packages: ["/home/nst/WebstormProjects/pi-9router"], env: envObj }, null, 2);
 
       const saveChoice = await ctx.ui.select("Save config to:", [
         ".env (project)",
@@ -469,10 +466,26 @@ export default async function (pi: ExtensionAPI) {
         writeFileSync(envPath, newContent);
         ctx.ui.notify(`✓ Saved to ${envPath}`, "info");
       } else if (saveChoice?.includes("settings.json")) {
-        ctx.ui.notify(
-          `Add to ~/.pi/settings.json:\n${settingsJson}`,
-          "info"
-        );
+        // Actually write to ~/.pi/settings.json
+        const { writeFileSync, existsSync, readFileSync } = await import("node:fs");
+        const os = await import("os");
+        const settingsPath = join(os.homedir(), ".pi", "settings.json");
+        let settings: any = {};
+        if (existsSync(settingsPath)) {
+          try {
+            settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+          } catch {}
+        }
+        settings.packages = settings.packages || [];
+        if (!settings.packages.includes("/home/nst/WebstormProjects/pi-9router")) {
+          settings.packages.push("/home/nst/WebstormProjects/pi-9router");
+        }
+        settings.env = settings.env || {};
+        settings.env.NINE_ROUTER_URL = url;
+        if (config.password) settings.env.NINE_ROUTER_PASSWORD = config.password;
+        if (apiKey) settings.env.NINE_ROUTER_API_KEY = apiKey;
+        writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+        ctx.ui.notify(`✓ Saved to ${settingsPath}`, "info");
       } else {
         ctx.ui.notify(
           `Config:\n${envLines.join("\n")}\n\nFor pi settings.json:\n${settingsJson}`,
