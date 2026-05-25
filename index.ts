@@ -59,6 +59,40 @@ function formatQuotaEntry(name: string, q: any): string {
   return `${label}: unlimited`;
 }
 
+async function quotaLinesForModel(config: RouterConfig, modelId: string): Promise<string[]> {
+  const selectedProvider = providerForModelId(modelId);
+  const data = await apiGet(
+    config,
+    `/api/providers/client?page=1&pageSize=50&accountStatus=active&sort=priority`
+  );
+  const active = (data.connections ?? []).filter((c: any) => c.isActive);
+  const connections = selectedProvider
+    ? active.filter((c: any) => c.provider === selectedProvider)
+    : active;
+  const title = selectedProvider
+    ? `⚡ 9Router Quota for ${modelId} (${selectedProvider}):`
+    : `⚡ 9Router Quota:`;
+  const lines: string[] = [title];
+
+  for (const conn of connections) {
+    try {
+      const usage = await apiGet(config, `/api/usage/${conn.id}`);
+      const quotaEntries = Object.entries(usage.quotas ?? {}) as [string, any][];
+      if (quotaEntries.length === 0) continue;
+
+      const lowest = quotaEntries.reduce((min, [, q]) => Math.min(min, quotaPercent(q)), 100);
+      const status = lowest <= 10 ? "🔴" : lowest <= 30 ? "🟡" : "🟢";
+      const quotaSummary = quotaEntries.map(([name, q]) => formatQuotaEntry(name, q)).join(", ");
+
+      lines.push(`  ${status} ${conn.provider}/${conn.name} [${usage.plan ?? ""}] ${quotaSummary}`);
+    } catch {
+      // skip failed quota fetch
+    }
+  }
+
+  return lines;
+}
+
 async function login(config: RouterConfig): Promise<string | null> {
   if (!config.password) return null;
 
@@ -332,46 +366,22 @@ export default async function (pi: ExtensionAPI) {
     },
   });
 
-  // Event: Show quota when selecting 9router model
+  // Event: Show quota below editor when selecting 9router model
   pi.on("model_select", async (event, ctx) => {
-    if (event.model.provider !== "9router") return;
+    if (event.model.provider !== "9router") {
+      ctx.ui.setWidget("9router-quota", undefined);
+      return;
+    }
 
     try {
-      const selectedProvider = providerForModelId(event.model.id);
-      const data = await apiGet(
-        config,
-        `/api/providers/client?page=1&pageSize=50&accountStatus=active&sort=priority`
+      const lines = await quotaLinesForModel(config, event.model.id);
+      ctx.ui.setWidget(
+        "9router-quota",
+        lines.length > 1 ? lines : [`⚡ 9Router Quota: no active quota for ${event.model.id}`],
+        { placement: "belowEditor" }
       );
-      const active = (data.connections ?? []).filter((c: any) => c.isActive);
-      const connections = selectedProvider
-        ? active.filter((c: any) => c.provider === selectedProvider)
-        : active;
-      const title = selectedProvider
-        ? `⚡ 9Router Quota for ${event.model.id} (${selectedProvider}):`
-        : `⚡ 9Router Quota:`;
-      const lines: string[] = [title];
-
-      for (const conn of connections) {
-        try {
-          const usage = await apiGet(config, `/api/usage/${conn.id}`);
-          const quotaEntries = Object.entries(usage.quotas ?? {}) as [string, any][];
-          if (quotaEntries.length === 0) continue;
-
-          const lowest = quotaEntries.reduce((min, [, q]) => Math.min(min, quotaPercent(q)), 100);
-          const status = lowest <= 10 ? "🔴" : lowest <= 30 ? "🟡" : "🟢";
-          const quotaSummary = quotaEntries.map(([name, q]) => formatQuotaEntry(name, q)).join(", ");
-
-          lines.push(`  ${status} ${conn.provider}/${conn.name} [${usage.plan ?? ""}] ${quotaSummary}`);
-        } catch {
-          // skip failed quota fetch
-        }
-      }
-
-      if (lines.length > 1) {
-        ctx.ui.notify(lines.join("\n"), "info");
-      }
     } catch {
-      // Router unreachable, skip silently
+      ctx.ui.setWidget("9router-quota", undefined);
     }
   });
 

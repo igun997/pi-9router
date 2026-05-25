@@ -7,7 +7,7 @@ Registers 9Router as a model provider + management tools for quota, providers, a
 ## Features
 
 - **Provider** — All 9Router models available as `9router/*` in pi
-- **Quota display** — Shows quota summary (🟢/🟡/🔴) when switching to 9router models
+- **Quota display** — Shows quota summary (🟢/🟡/🔴) below editor when switching to 9router models
 - **Tools** — Check providers, quota, test connections, view aliases/settings
 - **Setup wizard** — `/9r-setup` configures URL, password, API key interactively
 - **Skills** — Official 9Router skills for image gen, web search, web fetch
@@ -111,7 +111,7 @@ Legacy names still work: `NINE_ROUTER_URL`, `NINE_ROUTER_API_KEY`.
 
 ## Quota on Model Select
 
-When you switch to any `9router/*` model, a notification shows quota status. For prefixed models, quota is filtered to matching provider:
+When you switch to any `9router/*` model, a widget below editor shows quota status. For prefixed models, quota is filtered to matching provider:
 
 | Model prefix | Provider quota shown |
 |--------------|---------------------|
