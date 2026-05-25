@@ -14,6 +14,30 @@ Registers 9Router as a model provider + management tools for quota, providers, a
 
 ## Install
 
+### From GitHub
+
+```bash
+pi install git:github.com/igun997/pi-9router
+```
+
+Then add env vars to `~/.pi/settings.json`:
+
+```json
+{
+  "env": {
+    "NINE_ROUTER_URL": "http://localhost:20128",
+    "NINE_ROUTER_PASSWORD": "your-admin-password",
+    "NINE_ROUTER_API_KEY": "sk-..."
+  }
+}
+```
+
+### From local clone
+
+```bash
+git clone git@github.com:igun997/pi-9router.git
+```
+
 Add to `~/.pi/settings.json`:
 
 ```json
@@ -27,7 +51,7 @@ Add to `~/.pi/settings.json`:
 }
 ```
 
-Or test directly:
+### Quick test
 
 ```bash
 NINE_ROUTER_URL=http://localhost:20128 \
