@@ -79,16 +79,16 @@ When you switch to any `9router/*` model, a notification shows quota status for 
 
 ```
 ⚡ 9Router Quota:
-  🟢 claude/Lorenzo [Claude Code] session (5h): 85/100, weekly (7d): 80/100
+  🟢 claude/Account 1 [Claude Code] session (5h): 85/100, weekly (7d): 80/100
   🟢 kiro/Account 1 [KIRO PRO+] credit: 767.81/2000
-  🟢 codex/nusatek.ai@gmail.com [plus] session: 87/100, weekly: 82/100
+  🟢 codex/Account 2 [plus] session: 87/100, weekly: 82/100
 ```
 
 ## Testing
 
 ```bash
 NINE_ROUTER_URL=http://localhost:20128 \
-NINE_ROUTER_PASSWORD='@Indra290997' \
+NINE_ROUTER_PASSWORD='your-password' \
 NINE_ROUTER_API_KEY='sk-your-key' \
 npx tsx test.ts
 ```
