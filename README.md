@@ -20,43 +20,53 @@ Registers 9Router as a model provider + management tools for quota, providers, a
 pi install git:github.com/igun997/pi-9router
 ```
 
-Then add env vars to `~/.pi/settings.json`:
+Add env vars to your shell rc (`~/.bashrc`, `~/.zshrc`, etc), then restart pi:
 
-```json
-{
-  "env": {
-    "NINE_ROUTER_URL": "http://localhost:20128",
-    "NINE_ROUTER_PASSWORD": "your-admin-password",
-    "NINE_ROUTER_API_KEY": "sk-..."
-  }
-}
+```bash
+export NINEROUTER_URL=http://localhost:20128
+export NINEROUTER_KEY=sk-your-key
+export NINE_ROUTER_PASSWORD=your-admin-password
 ```
 
 ### From local clone
 
 ```bash
 git clone git@github.com:igun997/pi-9router.git
+cd pi-9router
 ```
 
-Add to `~/.pi/settings.json`:
+Add package path in `~/.pi/agent/settings.json`:
 
 ```json
 {
-  "packages": ["/path/to/pi-9router"],
-  "env": {
-    "NINE_ROUTER_URL": "http://localhost:20128",
-    "NINE_ROUTER_PASSWORD": "your-admin-password",
-    "NINE_ROUTER_API_KEY": "sk-..."
-  }
+  "packages": ["/path/to/pi-9router"]
 }
 ```
+
+Add env vars to your shell rc (`~/.bashrc`, `~/.zshrc`, etc), then restart pi:
+
+```bash
+export NINEROUTER_URL=http://localhost:20128
+export NINEROUTER_KEY=sk-your-key
+export NINE_ROUTER_PASSWORD=your-admin-password
+```
+
+### Interactive setup
+
+Inside pi:
+
+```text
+/9r-setup
+```
+
+Wizard tests URL, logs in, selects API key, and can save config.
 
 ### Quick test
 
 ```bash
-NINE_ROUTER_URL=http://localhost:20128 \
+NINEROUTER_URL=http://localhost:20128 \
 NINE_ROUTER_PASSWORD=your-password \
-NINE_ROUTER_API_KEY=sk-your-key \
+NINEROUTER_KEY=sk-your-key \
 pi -e /path/to/pi-9router
 ```
 
@@ -64,9 +74,11 @@ pi -e /path/to/pi-9router
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `NINE_ROUTER_URL` | No | Base URL (default: `http://localhost:20128`) |
+| `NINEROUTER_URL` | No | Base URL (default: `http://localhost:20128`) |
+| `NINEROUTER_KEY` | No | API key (`sk-...`) for OpenAI-compatible `/v1/*` endpoints |
 | `NINE_ROUTER_PASSWORD` | No | Admin dashboard password (for quota/provider management) |
-| `NINE_ROUTER_API_KEY` | No | API key (`sk-...`) for OpenAI-compatible `/v1/*` endpoints |
+
+Legacy names still work: `NINE_ROUTER_URL`, `NINE_ROUTER_API_KEY`.
 
 > **Password vs API Key:** The password authenticates to the admin dashboard (manage providers, check quota). The API key authenticates to the OpenAI-compatible endpoint (chat completions, image gen, etc). They are independent.
 
@@ -99,7 +111,19 @@ pi -e /path/to/pi-9router
 
 ## Quota on Model Select
 
-When you switch to any `9router/*` model, a notification shows quota status for all active providers:
+When you switch to any `9router/*` model, a notification shows quota status. For prefixed models, quota is filtered to matching provider:
+
+| Model prefix | Provider quota shown |
+|--------------|---------------------|
+| `cx/` | `codex` |
+| `cc/` | `claude` |
+| `kr/` | `kiro` |
+| `ag/` | `antigravity` |
+| `cu/` | `cursor` |
+| `gh/` | `github` |
+| `mm/` | `minimax` |
+
+Unknown prefixes show all active providers.
 
 ```
 ⚡ 9Router Quota:
@@ -111,9 +135,9 @@ When you switch to any `9router/*` model, a notification shows quota status for 
 ## Testing
 
 ```bash
-NINE_ROUTER_URL=http://localhost:20128 \
+NINEROUTER_URL=http://localhost:20128 \
 NINE_ROUTER_PASSWORD='your-password' \
-NINE_ROUTER_API_KEY='sk-your-key' \
+NINEROUTER_KEY='sk-your-key' \
 npx tsx test.ts
 ```
 
