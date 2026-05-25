@@ -9,7 +9,8 @@
  * - Router settings
  *
  * Env vars:
- *   NINE_ROUTER_URL - base URL (default: http://localhost:20128)
+ *   NINEROUTER_URL - base URL (default: http://localhost:20128)
+ *   NINEROUTER_KEY - API key (from Dashboard → Keys)
  *   NINE_ROUTER_PASSWORD - password (optional, some routers have no auth)
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -88,7 +89,7 @@ async function apiPost(config: RouterConfig, path: string, body?: any): Promise<
 
 export default async function (pi: ExtensionAPI) {
   const config: RouterConfig = {
-    baseUrl: process.env.NINE_ROUTER_URL ?? "http://localhost:20128",
+    baseUrl: process.env.NINEROUTER_URL ?? process.env.NINE_ROUTER_URL ?? "http://localhost:20128",
     password: process.env.NINE_ROUTER_PASSWORD,
   };
 
@@ -113,7 +114,7 @@ export default async function (pi: ExtensionAPI) {
       pi.registerProvider("9router", {
         name: "9Router",
         baseUrl: `${config.baseUrl}/v1`,
-        apiKey: "NINE_ROUTER_API_KEY",
+        apiKey: process.env.NINEROUTER_KEY ?? process.env.NINE_ROUTER_API_KEY ?? "",
         api: "openai-completions",
         models: payload.data.map((model) => ({
           id: model.id,
@@ -440,21 +441,21 @@ export default async function (pi: ExtensionAPI) {
       }
 
       // Step 5: Show config summary
-      const envObj: Record<string, string> = { NINE_ROUTER_URL: url };
+      const envObj: Record<string, string> = { NINEROUTER_URL: url };
       if (config.password) envObj.NINE_ROUTER_PASSWORD = config.password;
-      if (apiKey) envObj.NINE_ROUTER_API_KEY = apiKey;
+      if (apiKey) envObj.NINEROUTER_KEY = apiKey;
 
       const envLines = [
-        `NINE_ROUTER_URL=${url}`,
+        `NINEROUTER_URL=${url}`,
         config.password ? `NINE_ROUTER_PASSWORD=${config.password}` : null,
-        apiKey ? `NINE_ROUTER_API_KEY=${apiKey}` : null,
+        apiKey ? `NINEROUTER_KEY=${apiKey}` : null,
       ].filter(Boolean);
 
       const settingsJson = JSON.stringify({ packages: ["/home/nst/WebstormProjects/pi-9router"], env: envObj }, null, 2);
 
       const saveChoice = await ctx.ui.select("Save config to:", [
         ".env (project)",
-        "~/.pi/settings.json (global)",
+        "~/.pi/agent/settings.json (global)",
         "Show only (don't save)",
       ]);
 
@@ -462,12 +463,12 @@ export default async function (pi: ExtensionAPI) {
         const envPath = join(ctx.cwd, ".env");
         const existing = existsSync(envPath) ? readFileSync(envPath, "utf-8") : "";
         const newContent = existing
-          ? existing.replace(/^NINE_ROUTER_.*$/gm, "").trim() + "\n" + envLines.join("\n") + "\n"
+          ? existing.replace(/^(NINE_ROUTER_|NINEROUTER_).*$/gm, "").trim() + "\n" + envLines.join("\n") + "\n"
           : envLines.join("\n") + "\n";
         writeFileSync(envPath, newContent);
         ctx.ui.notify(`✓ Saved to ${envPath}`, "info");
       } else if (saveChoice?.includes("settings.json")) {
-        const settingsPath = join(homedir(), ".pi", "settings.json");
+        const settingsPath = join(homedir(), ".pi", "agent", "settings.json");
         let settings: any = {};
         if (existsSync(settingsPath)) {
           try {
@@ -479,14 +480,14 @@ export default async function (pi: ExtensionAPI) {
           settings.packages.push("/home/nst/WebstormProjects/pi-9router");
         }
         settings.env = settings.env || {};
-        settings.env.NINE_ROUTER_URL = url;
+        settings.env.NINEROUTER_URL = url;
         if (config.password) settings.env.NINE_ROUTER_PASSWORD = config.password;
-        if (apiKey) settings.env.NINE_ROUTER_API_KEY = apiKey;
+        if (apiKey) settings.env.NINEROUTER_KEY = apiKey;
         writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
         ctx.ui.notify(`✓ Saved to ${settingsPath}`, "info");
       } else {
         ctx.ui.notify(
-          `Config:\n${envLines.join("\n")}\n\nFor pi settings.json:\n${settingsJson}`,
+          `Config:\n${envLines.join("\n")}\n\nFor pi agent/settings.json:\n${settingsJson}`,
           "info"
         );
       }
