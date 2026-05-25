@@ -13,6 +13,9 @@
  *   NINE_ROUTER_PASSWORD - password (optional, some routers have no auth)
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { join } from "node:path";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { Type } from "typebox";
 
 interface RouterConfig {
@@ -456,8 +459,6 @@ export default async function (pi: ExtensionAPI) {
       ]);
 
       if (saveChoice === ".env (project)") {
-        const { writeFileSync, existsSync, readFileSync } = await import("node:fs");
-        const { join } = await import("node:path");
         const envPath = join(ctx.cwd, ".env");
         const existing = existsSync(envPath) ? readFileSync(envPath, "utf-8") : "";
         const newContent = existing
@@ -466,10 +467,7 @@ export default async function (pi: ExtensionAPI) {
         writeFileSync(envPath, newContent);
         ctx.ui.notify(`✓ Saved to ${envPath}`, "info");
       } else if (saveChoice?.includes("settings.json")) {
-        // Actually write to ~/.pi/settings.json
-        const { writeFileSync, existsSync, readFileSync } = await import("node:fs");
-        const os = await import("os");
-        const settingsPath = join(os.homedir(), ".pi", "settings.json");
+        const settingsPath = join(homedir(), ".pi", "settings.json");
         let settings: any = {};
         if (existsSync(settingsPath)) {
           try {
