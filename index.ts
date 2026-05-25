@@ -111,10 +111,13 @@ export default async function (pi: ExtensionAPI) {
         }>;
       };
 
+      const apiKey = process.env.NINEROUTER_KEY ?? process.env.NINE_ROUTER_API_KEY ?? "";
+      if (!apiKey) return; // apiKey required by pi; skip registration if not set
+
       pi.registerProvider("9router", {
         name: "9Router",
         baseUrl: `${config.baseUrl}/v1`,
-        apiKey: process.env.NINEROUTER_KEY ?? process.env.NINE_ROUTER_API_KEY ?? "",
+        apiKey,
         api: "openai-completions",
         models: payload.data.map((model) => ({
           id: model.id,
