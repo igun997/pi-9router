@@ -25,6 +25,40 @@ interface RouterConfig {
   token?: string;
 }
 
+const MODEL_PROVIDER_PREFIX: Record<string, string> = {
+  cx: "codex",
+  cc: "claude",
+  kr: "kiro",
+  ag: "antigravity",
+  cu: "cursor",
+  gh: "github",
+  mm: "minimax",
+};
+
+function providerForModelId(modelId: string): string | null {
+  const prefix = modelId.split("/", 1)[0];
+  return MODEL_PROVIDER_PREFIX[prefix] ?? null;
+}
+
+function quotaPercent(q: any): number {
+  if (typeof q.remainingPercentage === "number") return q.remainingPercentage;
+  if (typeof q.remaining === "number" && typeof q.total === "number" && q.total > 0) {
+    return (q.remaining / q.total) * 100;
+  }
+  if (typeof q.used === "number" && typeof q.total === "number" && q.total > 0) {
+    return Math.max(0, 100 - (q.used / q.total) * 100);
+  }
+  return 100;
+}
+
+function formatQuotaEntry(name: string, q: any): string {
+  const label = q.displayName ?? name;
+  if (q.unlimited) return `${label}: unlimited`;
+  if (q.remaining != null && q.total != null) return `${label}: ${q.remaining}/${q.total}`;
+  if (q.used != null && q.total != null) return `${label}: ${q.used}/${q.total} used`;
+  return `${label}: unlimited`;
+}
+
 async function login(config: RouterConfig): Promise<string | null> {
   if (!config.password) return null;
 
@@ -303,35 +337,29 @@ export default async function (pi: ExtensionAPI) {
     if (event.model.provider !== "9router") return;
 
     try {
-      // Get all active providers and build quota summary
+      const selectedProvider = providerForModelId(event.model.id);
       const data = await apiGet(
         config,
         `/api/providers/client?page=1&pageSize=50&accountStatus=active&sort=priority`
       );
-      const lines: string[] = ["⚡ 9Router Quota:"];
+      const active = (data.connections ?? []).filter((c: any) => c.isActive);
+      const connections = selectedProvider
+        ? active.filter((c: any) => c.provider === selectedProvider)
+        : active;
+      const title = selectedProvider
+        ? `⚡ 9Router Quota for ${event.model.id} (${selectedProvider}):`
+        : `⚡ 9Router Quota:`;
+      const lines: string[] = [title];
 
-      for (const conn of (data.connections ?? []).filter((c: any) => c.isActive)) {
+      for (const conn of connections) {
         try {
           const usage = await apiGet(config, `/api/usage/${conn.id}`);
-          const quotas = usage.quotas ?? {};
-          const quotaEntries = Object.entries(quotas) as [string, any][];
-
+          const quotaEntries = Object.entries(usage.quotas ?? {}) as [string, any][];
           if (quotaEntries.length === 0) continue;
 
-          // Find lowest remaining percentage
-          const lowest = quotaEntries.reduce((min, [, q]) => {
-            const pct = q.remainingPercentage ?? (q.remaining != null && q.total ? (q.remaining / q.total) * 100 : 100);
-            return pct < min ? pct : min;
-          }, 100);
-
+          const lowest = quotaEntries.reduce((min, [, q]) => Math.min(min, quotaPercent(q)), 100);
           const status = lowest <= 10 ? "🔴" : lowest <= 30 ? "🟡" : "🟢";
-          const quotaSummary = quotaEntries
-            .map(([name, q]) => {
-              if (q.remaining != null) return `${name}: ${q.remaining}/${q.total}`;
-              if (q.used != null) return `${name}: ${q.used}/${q.total} used`;
-              return `${name}: unlimited`;
-            })
-            .join(", ");
+          const quotaSummary = quotaEntries.map(([name, q]) => formatQuotaEntry(name, q)).join(", ");
 
           lines.push(`  ${status} ${conn.provider}/${conn.name} [${usage.plan ?? ""}] ${quotaSummary}`);
         } catch {
