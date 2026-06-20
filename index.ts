@@ -14,10 +14,67 @@
  *   NINE_ROUTER_PASSWORD - password (optional, some routers have no auth)
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
+
+// Absolute path to this package directory (works on any machine).
+const PACKAGE_DIR = dirname(fileURLToPath(import.meta.url));
+
+// 9Router env vars this extension consumes. Canonical names first.
+const NINEROUTER_ENV_KEYS = [
+  "NINEROUTER_URL",
+  "NINEROUTER_KEY",
+  "NINE_ROUTER_URL",
+  "NINE_ROUTER_PASSWORD",
+  "NINE_ROUTER_API_KEY",
+] as const;
+
+/**
+ * Pi does NOT load a settings.json `env` block into process.env. This
+ * extension persists its config there (via /9r-setup), so it must inject
+ * those values itself at startup before reading any env var.
+ *
+ * Reads global (~/.pi/agent/settings.json) then project (.pi/settings.json),
+ * project winning. Only injects 9Router keys, and only when not already set
+ * in the real environment (shell rc / CLI still take precedence).
+ */
+function injectEnvFromSettings(cwd: string): void {
+  // Capture which keys exist in the real environment (shell rc / CLI) up front.
+  // Those always win; settings.json only fills gaps.
+  const shellHas = new Set(NINEROUTER_ENV_KEYS.filter((k) => process.env[k]));
+
+  // Merge global first, then project (project wins) into one resolved map.
+  const resolved: Record<string, string> = {};
+  const candidates = [
+    join(homedir(), ".pi", "agent", "settings.json"),
+    join(cwd, ".pi", "settings.json"),
+  ];
+  for (const path of candidates) {
+    if (!existsSync(path)) continue;
+    let parsed: any;
+    try {
+      parsed = JSON.parse(readFileSync(path, "utf-8"));
+    } catch {
+      continue; // malformed settings.json — skip gracefully
+    }
+    const env = parsed?.env;
+    if (!env || typeof env !== "object") continue;
+    for (const key of NINEROUTER_ENV_KEYS) {
+      const value = env[key];
+      if (typeof value === "string" && value) resolved[key] = value;
+    }
+  }
+
+  // Inject resolved settings values, but never override the real shell env.
+  for (const key of NINEROUTER_ENV_KEYS) {
+    if (!shellHas.has(key) && resolved[key]) {
+      process.env[key] = resolved[key];
+    }
+  }
+}
 
 interface RouterConfig {
   baseUrl: string;
@@ -38,6 +95,83 @@ const MODEL_PROVIDER_PREFIX: Record<string, string> = {
 function providerForModelId(modelId: string): string | null {
   const prefix = modelId.split("/", 1)[0];
   return MODEL_PROVIDER_PREFIX[prefix] ?? null;
+}
+
+/**
+ * Resolve true context window + max output tokens for a model id.
+ *
+ * 9Router's /v1/models and /api/models expose no context metadata (only
+ * vision/search/reasoning caps), so we infer real limits from the model
+ * family in the id. Matched most-specific-first; falls back to a safe
+ * 128k / 8k default for unknown models.
+ */
+function resolveModelContext(modelId: string): { contextWindow: number; maxTokens: number } {
+  // Strip provider/route prefixes (e.g. "openrouter/", "cu/", "kr/", vendor)
+  // and any trailing ":free"/route suffix so family matching is robust.
+  const full = modelId.toLowerCase();
+  // Match on the model tail (after last "/") so provider/route prefixes
+  // like "gemini/", "openrouter/nvidia/", "cu/" don't pollute family detection.
+  const id = full.includes("/") ? full.slice(full.lastIndexOf("/") + 1) : full;
+
+  const any = (...needles: string[]) => needles.some((n) => id.includes(n));
+
+  // [pattern test, contextWindow, maxTokens] — most specific first.
+  type Rule = [() => boolean, number, number];
+  const rules: Rule[] = [
+    // ---- Anthropic Claude ----
+    // Sonnet 4.x supports 1M context beta; Opus/Haiku 4.x = 200k.
+    // Version may precede or follow "sonnet" (claude-sonnet-4-6 / claude-4.5-sonnet).
+    [() => any("sonnet") && any("-4", "4.5", "4.6", "4-"), 1_000_000, 64_000],
+    [() => any("claude", "sonnet", "opus", "haiku"), 200_000, 64_000],
+
+    // ---- OpenAI GPT / o-series / codex ----
+    [() => any("gpt-5", "gpt5"), 400_000, 128_000],
+    [() => any("codex"), 400_000, 128_000],
+    [() => any("gpt-4.1", "gpt4.1"), 1_047_576, 32_768],
+    [() => any("gpt-4o", "gpt4o"), 128_000, 16_384],
+    [() => any("gpt-4-turbo", "gpt-4turbo"), 128_000, 4_096],
+    [() => any("o3", "o4-mini", "o4mini"), 200_000, 100_000],
+    [() => any("o1"), 200_000, 100_000],
+
+    // ---- Google Gemini / Gemma ----
+    [() => any("gemini-3", "gemini3", "gemini-2.5", "gemini2.5", "gemini-1.5-pro"), 1_048_576, 65_536],
+    [() => any("gemini-1.5-flash", "gemini-flash"), 1_048_576, 8_192],
+    [() => any("gemini"), 1_048_576, 65_536],
+    [() => any("gemma"), 128_000, 8_192],
+
+    // ---- Qwen (Alibaba) ----
+    [() => any("-1m", "_1m"), 1_000_000, 8_192],
+    [() => any("qwen3-max", "qwen3.5-max", "qwen3.6-max", "qwen-max"), 256_000, 32_768],
+    [() => any("qwen3-coder", "qwen3.5-coder", "coder-next", "qwen-coder"), 256_000, 65_536],
+    [() => any("qwen"), 131_072, 16_384],
+
+    // ---- Kimi (Moonshot) ----
+    [() => any("kimi"), 256_000, 32_768],
+
+    // ---- DeepSeek ----
+    [() => any("deepseek"), 128_000, 8_192],
+
+    // ---- GLM (Zhipu) ----
+    [() => any("glm-5", "glm5", "glm-4"), 128_000, 16_384],
+
+    // ---- MiniMax ----
+    [() => any("minimax-m", "minimax-vl", "mimo"), 1_000_000, 32_768],
+    [() => any("minimax"), 245_760, 16_384],
+
+    // ---- Nvidia Nemotron ----
+    [() => any("nemotron"), 128_000, 16_384],
+
+    // ---- Llama / Mistral / others (conservative) ----
+    [() => any("llama-3.1", "llama3.1", "llama-4", "llama4"), 128_000, 8_192],
+    [() => any("mistral", "mixtral"), 128_000, 8_192],
+  ];
+
+  for (const [test, ctx, out] of rules) {
+    if (test()) return { contextWindow: ctx, maxTokens: out };
+  }
+
+  // Fallback for unknown models.
+  return { contextWindow: 128_000, maxTokens: 8_192 };
 }
 
 function quotaPercent(q: any): number {
@@ -156,6 +290,10 @@ async function apiPost(config: RouterConfig, path: string, body?: any): Promise<
 }
 
 export default async function (pi: ExtensionAPI) {
+  // Pi does not load settings.json `env` into process.env; do it ourselves
+  // so /9r-setup persisted config works with no shell rc edits.
+  injectEnvFromSettings(process.cwd());
+
   const config: RouterConfig = {
     baseUrl: process.env.NINEROUTER_URL ?? process.env.NINE_ROUTER_URL ?? "http://localhost:20128",
     password: process.env.NINE_ROUTER_PASSWORD,
@@ -187,15 +325,18 @@ export default async function (pi: ExtensionAPI) {
         baseUrl: `${config.baseUrl}/v1`,
         apiKey,
         api: "openai-completions",
-        models: payload.data.map((model) => ({
-          id: model.id,
-          name: model.name ?? model.id,
-          reasoning: false,
-          input: ["text"],
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          contextWindow: model.context_window ?? 128000,
-          maxTokens: model.max_tokens ?? 4096,
-        })),
+        models: payload.data.map((model) => {
+          const ctx = resolveModelContext(model.id);
+          return {
+            id: model.id,
+            name: model.name ?? model.id,
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: model.context_window ?? ctx.contextWindow,
+            maxTokens: model.max_tokens ?? ctx.maxTokens,
+          };
+        }),
       });
     }
   } catch {
@@ -492,7 +633,7 @@ export default async function (pi: ExtensionAPI) {
         apiKey ? `NINEROUTER_KEY=${apiKey}` : null,
       ].filter(Boolean);
 
-      const settingsJson = JSON.stringify({ packages: ["/home/nst/WebstormProjects/pi-9router"], env: envObj }, null, 2);
+      const settingsJson = JSON.stringify({ packages: [PACKAGE_DIR], env: envObj }, null, 2);
 
       const saveChoice = await ctx.ui.select("Save config to:", [
         ".env (project)",
@@ -517,8 +658,8 @@ export default async function (pi: ExtensionAPI) {
           } catch {}
         }
         settings.packages = settings.packages || [];
-        if (!settings.packages.includes("/home/nst/WebstormProjects/pi-9router")) {
-          settings.packages.push("/home/nst/WebstormProjects/pi-9router");
+        if (!settings.packages.includes(PACKAGE_DIR)) {
+          settings.packages.push(PACKAGE_DIR);
         }
         settings.env = settings.env || {};
         settings.env.NINEROUTER_URL = url;
@@ -551,15 +692,18 @@ export default async function (pi: ExtensionAPI) {
             baseUrl: `${url}/v1`,
             apiKey,
             api: "openai-completions",
-            models: payload.data.map((model) => ({
-              id: model.id,
-              name: model.name ?? model.id,
-              reasoning: false,
-              input: ["text"] as ("text" | "image")[],
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-              contextWindow: model.context_window ?? 128000,
-              maxTokens: model.max_tokens ?? 4096,
-            })),
+            models: payload.data.map((model) => {
+              const mctx = resolveModelContext(model.id);
+              return {
+                id: model.id,
+                name: model.name ?? model.id,
+                reasoning: false,
+                input: ["text"] as ("text" | "image")[],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                contextWindow: model.context_window ?? mctx.contextWindow,
+                maxTokens: model.max_tokens ?? mctx.maxTokens,
+              };
+            }),
           });
           ctx.ui.notify("✓ 9router provider registered — models available now (no restart needed)", "info");
         } else if (!apiKey) {
