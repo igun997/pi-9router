@@ -83,7 +83,7 @@ Allowed vision models register `input: ["text", "image"]`; Pi standard local `re
 1. `pi9router.context.models[model-id]` override
 2. Valid `context_window` and `max_tokens` from router response
 3. Bundled exact, vendor-source-attributed catalog
-4. Conservative `32k` context / `4k` output fallback
+4. Conservative `200k` context / `4k` output fallback
 
 `/9r-model <id>` shows `owned_by`, context source, limits, reference, and image-read decision. Model identity plus discovered `owned_by` drives metadata; route prefix alone does not. `cx` maps to Codex for quota display only.
 
