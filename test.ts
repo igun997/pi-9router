@@ -1,13 +1,16 @@
 /**
  * E2E tests for pi-9router extension.
- * Requires 9Router running at NINE_ROUTER_URL (default localhost:20128).
+ * Requires explicit credentials for authenticated coverage.
  *
- * Run: npx tsx test.ts
+ * Run: NINEROUTER_URL=http://localhost:20128 NINEROUTER_KEY=sk-... npx tsx test.ts
  */
 
-const BASE_URL = process.env.NINE_ROUTER_URL ?? "http://localhost:20128";
-const PASSWORD = process.env.NINE_ROUTER_PASSWORD ?? "@Indra290997";
-const API_KEY = process.env.NINE_ROUTER_API_KEY ?? "";
+const BASE_URL = process.env.NINEROUTER_URL ?? process.env.NINE_ROUTER_URL ?? "http://localhost:20128";
+const PASSWORD = process.env.NINE_ROUTER_PASSWORD ?? "";
+const API_KEY = process.env.NINEROUTER_KEY ?? process.env.NINE_ROUTER_API_KEY ?? "";
+const CX_VISION_MODEL = process.env.NINEROUTER_E2E_CX_VISION_MODEL ?? "";
+const CX_IMAGE_MODEL = process.env.NINEROUTER_E2E_CX_IMAGE_MODEL ?? "";
+const RUN_IMAGE_E2E = process.env.NINEROUTER_E2E_RUN_IMAGE === "true";
 
 let authToken = "";
 let passed = 0;
@@ -158,8 +161,10 @@ async function testChatCompletion() {
     }),
   });
   const data = await res.json();
-  if (data.choices?.[0]?.message?.content) ok(`v1/chat/completions (got response)`);
-  else fail("v1/chat/completions", JSON.stringify(data).slice(0, 150));
+  const message = data.choices?.[0]?.message;
+  if (res.ok && (typeof message?.content === "string" || typeof message?.reasoning === "string")) {
+    ok(`v1/chat/completions (got response)`);
+  } else fail("v1/chat/completions", JSON.stringify(data).slice(0, 150));
 }
 
 async function testWebModels() {
@@ -176,27 +181,76 @@ async function testImageModels() {
   else fail("v1/models/image", "not array");
 }
 
+async function testCxVisionAndGeneration() {
+  if (!RUN_IMAGE_E2E) {
+    console.log("  - cx image E2E skipped (set NINEROUTER_E2E_RUN_IMAGE=true with explicit cx model IDs)");
+    return;
+  }
+  if (!API_KEY || !CX_VISION_MODEL || !CX_IMAGE_MODEL) {
+    fail("cx image E2E", "requires NINEROUTER_KEY, NINEROUTER_E2E_CX_VISION_MODEL, and NINEROUTER_E2E_CX_IMAGE_MODEL");
+    return;
+  }
+  if (!CX_VISION_MODEL.startsWith("cx/") || !CX_IMAGE_MODEL.startsWith("cx/")) {
+    fail("cx image E2E", "vision and image model IDs must use cx/; provider fallback is forbidden");
+    return;
+  }
+
+  const vision = await fetch(`${BASE_URL}/v1/chat/completions`, {
+    method: "POST",
+    headers: apiKeyHeaders(),
+    body: JSON.stringify({
+      model: CX_VISION_MODEL,
+      stream: false,
+      max_tokens: 32,
+      messages: [{ role: "user", content: [
+        { type: "text", text: "Reply with image received." },
+        { type: "image_url", image_url: { url: "https://placehold.co/2x2.png" } },
+      ] }],
+    }),
+  });
+  if (vision.ok) ok(`cx vision (${CX_VISION_MODEL})`);
+  else fail("cx vision", `${vision.status}: ${await vision.text()}`.slice(0, 240));
+
+  const generated = await fetch(`${BASE_URL}/v1/images/generations`, {
+    method: "POST",
+    headers: apiKeyHeaders(),
+    body: JSON.stringify({ model: CX_IMAGE_MODEL, prompt: "minimal cyan dot on white background", n: 1 }),
+  });
+  const image = await generated.json();
+  if (generated.ok && Array.isArray(image.data) && image.data.length > 0) ok(`cx image generation (${CX_IMAGE_MODEL})`);
+  else fail("cx image generation", `${generated.status}: ${JSON.stringify(image)}`.slice(0, 240));
+}
+
 // --- Run ---
 
 async function main() {
   console.log(`\n9Router E2E Tests — ${BASE_URL}\n`);
 
-  console.log("── Admin API (password auth) ──");
-  await testHealth();
-  await testLogin();
-  await testAuthStatus();
-  const connections = await testProviders();
-  await testUsage(connections);
-  await testProviderTest(connections);
-  await testModelAliases();
-  await testSettings();
-  await testApiKeys();
+  if (PASSWORD) {
+    console.log("── Admin API (password auth) ──");
+    await testHealth();
+    await testLogin();
+    await testAuthStatus();
+    const connections = await testProviders();
+    await testUsage(connections);
+    await testProviderTest(connections);
+    await testModelAliases();
+    await testSettings();
+    await testApiKeys();
+  } else {
+    console.log("── Admin API skipped (set NINE_ROUTER_PASSWORD) ──");
+  }
 
-  console.log("\n── OpenAI-compatible API (api key) ──");
-  await testModelsEndpoint();
-  await testWebModels();
-  await testImageModels();
-  await testChatCompletion();
+  if (API_KEY) {
+    console.log("\n── OpenAI-compatible API (api key) ──");
+    await testModelsEndpoint();
+    await testWebModels();
+    await testImageModels();
+    await testChatCompletion();
+    await testCxVisionAndGeneration();
+  } else {
+    console.log("\n── OpenAI-compatible API skipped (set NINEROUTER_KEY) ──");
+  }
 
   console.log(`\n── Results: ${passed} passed, ${failed} failed ──\n`);
   process.exit(failed > 0 ? 1 : 0);

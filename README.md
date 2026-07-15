@@ -72,7 +72,7 @@ All image access denies by default. Add public settings globally or per project:
 
 Rule precedence: exact model → model glob (`"cx/gpt-image-*"`) → `owned_by` provider → default deny.
 
-Allowed vision models register Pi-native `input: ["text", "image"]`; Pi standard `read`, paste, drag/drop, and `@image.png` work directly. No reader proxy tool exists.
+Allowed vision models register `input: ["text", "image"]`. Current cx/Codex route accepts publicly reachable remote image URLs only. It rejects Pi local-image data URLs, so Pi standard local `read`, paste, drag/drop, and `@image.png` are unsupported for cx until 9Router adds base64/data-URL support. No reader proxy tool exists.
 
 `ninerouter_generate_image` calls `/v1/models/image` then `/v1/images/generations`. It rejects unallowed models before any generation request. For cx-only operation, enable `cx` for both `read` and `generate`; no provider fallback occurs.
 
@@ -119,7 +119,7 @@ Unit tests require no credentials:
 npm test
 ```
 
-E2E needs explicit router credentials. Final cx vision/image generation E2E must enable cx in `pi9router.images.read` and `.generate`, and must fail if no cx image model is returned instead of using another provider.
+E2E needs explicit router credentials. Final cx vision/image generation E2E uses a public remote image URL, enables cx in `pi9router.images.read` and `.generate`, and must fail if no cx image model is returned instead of using another provider.
 
 ## License
 
