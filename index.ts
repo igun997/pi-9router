@@ -21,27 +21,13 @@ import { RouterModel } from "./src/catalog.ts";
 import { generateImage } from "./src/images.ts";
 import { loginNineRouter, LoginCallbacks } from "./src/login.ts";
 import { buildNineRouterProviderConfig } from "./src/provider.ts";
+import { resolveQuotaProvider } from "./src/quota.ts";
 import { loadNineRouterSettings, saveNineRouterBaseUrl } from "./src/settings.ts";
 
 interface RouterConfig {
   baseUrl: string;
   password?: string;
   token?: string;
-}
-
-const MODEL_PROVIDER_PREFIX: Record<string, string> = {
-  cx: "codex",
-  cc: "claude",
-  kr: "kiro",
-  ag: "antigravity",
-  cu: "cursor",
-  gh: "github",
-  mm: "minimax",
-};
-
-function providerForModelId(modelId: string): string | null {
-  const prefix = modelId.split("/", 1)[0];
-  return MODEL_PROVIDER_PREFIX[prefix] ?? null;
 }
 
 /**
@@ -140,8 +126,12 @@ function formatQuotaEntry(name: string, q: any): string {
   return `${label}: unlimited`;
 }
 
-async function quotaLinesForModel(config: RouterConfig, modelId: string): Promise<string[]> {
-  const selectedProvider = providerForModelId(modelId);
+async function quotaLinesForModel(
+  config: RouterConfig,
+  modelId?: string,
+  ownedBy?: string,
+): Promise<string[]> {
+  const selectedProvider = ownedBy ? resolveQuotaProvider({ id: modelId ?? "", owned_by: ownedBy }) : undefined;
   const data = await apiGet(
     config,
     `/api/providers/client?page=1&pageSize=50&accountStatus=active&sort=priority`
@@ -150,7 +140,7 @@ async function quotaLinesForModel(config: RouterConfig, modelId: string): Promis
   const connections = selectedProvider
     ? active.filter((c: any) => c.provider === selectedProvider)
     : active;
-  const title = selectedProvider
+  const title = selectedProvider && modelId
     ? `⚡ 9Router Quota for ${modelId} (${selectedProvider}):`
     : `⚡ 9Router Quota:`;
   const lines: string[] = [title];
@@ -512,23 +502,26 @@ export default async function (pi: ExtensionAPI) {
     },
   });
 
-  // Event: Show quota below editor when selecting 9router model
-  pi.on("model_select", async (event, ctx) => {
-    if (event.model.provider !== "9router") {
-      ctx.ui.setWidget("9router-quota", undefined);
-      return;
-    }
-
-    try {
-      const lines = await quotaLinesForModel(config, event.model.id);
-      ctx.ui.setWidget(
-        "9router-quota",
-        lines.length > 1 ? lines : [`⚡ 9Router Quota: no active quota for ${event.model.id}`],
-        { placement: "belowEditor" }
-      );
-    } catch {
-      ctx.ui.setWidget("9router-quota", undefined);
-    }
+  pi.registerCommand("9r-quota", {
+    description: "Check 9Router quota; prompts dashboard password for this command only",
+    handler: async (args, ctx) => {
+      const password = await ctx.ui.input("9Router dashboard password", "Used only for this quota check.", "");
+      if (!password) return;
+      const quotaConfig: RouterConfig = { baseUrl: config.baseUrl, password };
+      quotaConfig.token = (await dashboardLogin(quotaConfig)) ?? undefined;
+      if (!quotaConfig.token) {
+        ctx.ui.notify("9Router dashboard login failed.", "error");
+        return;
+      }
+      const modelId = args.trim() || undefined;
+      const model = modelId ? routerModels.find((candidate) => candidate.id === modelId) : undefined;
+      try {
+        const lines = await quotaLinesForModel(quotaConfig, modelId, model?.owned_by);
+        ctx.ui.notify(lines.join("\n"), "info");
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+      }
+    },
   });
 
   // Legacy entry point. Pi-native authentication lives in /login 9router.
