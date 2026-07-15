@@ -1,160 +1,125 @@
 # pi-9router
 
-Pi extension for [9Router](https://github.com/decolua/9router) — local/remote AI gateway with OpenAI-compatible REST.
-
-Registers 9Router as a model provider + management tools for quota, providers, and health monitoring.
-
-## Features
-
-- **Provider** — All 9Router models available as `9router/*` in pi
-- **Quota display** — Shows quota summary (🟢/🟡/🔴) below editor when switching to 9router models
-- **Tools** — Check providers, quota, test connections, view aliases/settings
-- **Setup wizard** — `/9r-setup` configures URL, password, API key interactively
-- **Skills** — Official 9Router skills for image gen, web search, web fetch
+Pi package for [9Router](https://github.com/decolua/9router). Registers native `9router` provider, model catalog, management tools, strict image policy, and quota commands.
 
 ## Install
-
-### From GitHub
 
 ```bash
 pi install git:github.com/igun997/pi-9router
 ```
 
-Add env vars to your shell rc (`~/.bashrc`, `~/.zshrc`, etc), then restart pi:
+Or add local package path to `~/.pi/agent/settings.json`:
+
+```json
+{ "packages": ["/path/to/pi-9router"] }
+```
+
+## Login
+
+Inside Pi:
+
+```text
+/login 9router
+```
+
+Flow:
+
+1. Enter router URL, or leave blank for `http://localhost:20128`.
+2. Enter API key directly, or enter dashboard password once to select an active API key.
+3. Pi validates `/v1/models` and stores API credential in `~/.pi/agent/auth.json`.
+
+Selected router URL is public config under `pi9router.baseUrl` in Pi settings. Dashboard password is never persisted. No `.env` is created or edited.
+
+Remote routers work through same flow. Use HTTPS for non-local routers.
+
+`/logout 9router` removes stored Pi credential. `/9r-setup` only shows migration instructions for `/login 9router`.
+
+### Legacy environment compatibility
+
+Existing shell configuration remains fallback-only:
 
 ```bash
 export NINEROUTER_URL=http://localhost:20128
 export NINEROUTER_KEY=sk-your-key
-export NINE_ROUTER_PASSWORD=your-admin-password
+# legacy names also accepted: NINE_ROUTER_URL, NINE_ROUTER_API_KEY
 ```
 
-### From local clone
+New setup does not read or write project `.env` files.
 
-```bash
-git clone git@github.com:igun997/pi-9router.git
-cd pi-9router
-```
+## Image policy
 
-Add package path in `~/.pi/agent/settings.json`:
+All image access denies by default. Add public settings globally or per project:
 
 ```json
 {
-  "packages": ["/path/to/pi-9router"]
+  "pi9router": {
+    "baseUrl": "http://localhost:20128",
+    "images": {
+      "read": {
+        "default": false,
+        "providers": { "cx": true },
+        "models": { "cx/gpt-4o": false }
+      },
+      "generate": {
+        "default": false,
+        "providers": { "cx": true },
+        "defaultModel": "cx/gpt-image-1"
+      }
+    }
+  }
 }
 ```
 
-Add env vars to your shell rc (`~/.bashrc`, `~/.zshrc`, etc), then restart pi:
+Rule precedence: exact model → model glob (`"cx/gpt-image-*"`) → `owned_by` provider → default deny.
 
-```bash
-export NINEROUTER_URL=http://localhost:20128
-export NINEROUTER_KEY=sk-your-key
-export NINE_ROUTER_PASSWORD=your-admin-password
-```
+Allowed vision models register Pi-native `input: ["text", "image"]`; Pi standard `read`, paste, drag/drop, and `@image.png` work directly. No reader proxy tool exists.
 
-### Interactive setup
+`ninerouter_generate_image` calls `/v1/models/image` then `/v1/images/generations`. It rejects unallowed models before any generation request. For cx-only operation, enable `cx` for both `read` and `generate`; no provider fallback occurs.
 
-Inside pi:
+## Context metadata
 
-```text
-/9r-setup
-```
+9Router model responses may not include token limits. Resolution order:
 
-Wizard tests URL, logs in, selects API key, and can save config.
+1. `pi9router.context.models[model-id]` override
+2. Valid `context_window` and `max_tokens` from router response
+3. Bundled exact, vendor-source-attributed catalog
+4. Conservative `32k` context / `4k` output fallback
 
-### Quick test
-
-```bash
-NINEROUTER_URL=http://localhost:20128 \
-NINE_ROUTER_PASSWORD=your-password \
-NINEROUTER_KEY=sk-your-key \
-pi -e /path/to/pi-9router
-```
-
-## Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `NINEROUTER_URL` | No | Base URL (default: `http://localhost:20128`) |
-| `NINEROUTER_KEY` | No | API key (`sk-...`) for OpenAI-compatible `/v1/*` endpoints |
-| `NINE_ROUTER_PASSWORD` | No | Admin dashboard password (for quota/provider management) |
-
-Legacy names still work: `NINE_ROUTER_URL`, `NINE_ROUTER_API_KEY`.
-
-> **Password vs API Key:** The password authenticates to the admin dashboard (manage providers, check quota). The API key authenticates to the OpenAI-compatible endpoint (chat completions, image gen, etc). They are independent.
+`/9r-model <id>` shows `owned_by`, context source, limits, reference, and image-read decision. Model identity plus discovered `owned_by` drives metadata; route prefix alone does not. `cx` maps to Codex for quota display only.
 
 ## Commands
 
 | Command | Description |
-|---------|-------------|
-| `/9r` | Quick status: health + active providers |
-| `/9r-setup` | Interactive setup wizard |
+|---|---|
+| `/9r` | Router health and active provider summary |
+| `/9r-quota [model-id]` | Quota check; prompts dashboard password for this invocation only |
+| `/9r-settings` | Show resolved public router settings and policies |
+| `/9r-model <model-id>` | Inspect context and native vision capability |
+| `/9r-setup` | Migration hint to `/login 9router` |
+
+No quota widget runs on model selection.
 
 ## Tools
 
 | Tool | Description |
-|------|-------------|
+|---|---|
+| `ninerouter_generate_image` | Generate image with policy-allowed model |
 | `ninerouter_health` | Health check |
-| `ninerouter_providers` | List all provider connections with status |
-| `ninerouter_quota` | Check quota/usage (single or all providers) |
-| `ninerouter_test` | Test a provider connection |
-| `ninerouter_aliases` | List model alias shortcuts |
-| `ninerouter_settings` | View router configuration |
+| `ninerouter_providers` | List provider connections |
+| `ninerouter_quota` | Usage data where admin auth is available |
+| `ninerouter_test` | Test provider connection |
+| `ninerouter_aliases` | List model aliases |
+| `ninerouter_settings` | Router settings |
 
-## Skills
+## Test
 
-| Skill | Trigger |
-|-------|---------|
-| `9router` | Setup, model discovery, capability index |
-| `9router-image` | Image generation via `/v1/images/generations` |
-| `9router-web-search` | Web search via `/v1/search` |
-| `9router-web-fetch` | URL → markdown via `/v1/web/fetch` |
-
-## Quota on Model Select
-
-When you switch to any `9router/*` model, a widget below editor shows quota status. For prefixed models, quota is filtered to matching provider:
-
-| Model prefix | Provider quota shown |
-|--------------|---------------------|
-| `cx/` | `codex` |
-| `cc/` | `claude` |
-| `kr/` | `kiro` |
-| `ag/` | `antigravity` |
-| `cu/` | `cursor` |
-| `gh/` | `github` |
-| `mm/` | `minimax` |
-
-Unknown prefixes show all active providers.
-
-```
-⚡ 9Router Quota:
-  🟢 claude/Account 1 [Claude Code] session (5h): 85/100, weekly (7d): 80/100
-  🟢 kiro/Account 1 [KIRO PRO+] credit: 767.81/2000
-  🟢 codex/Account 2 [plus] session: 87/100, weekly: 82/100
-```
-
-## Testing
+Unit tests require no credentials:
 
 ```bash
-NINEROUTER_URL=http://localhost:20128 \
-NINE_ROUTER_PASSWORD='your-password' \
-NINEROUTER_KEY='sk-your-key' \
-npx tsx test.ts
+npm test
 ```
 
-## Project Structure
-
-```
-pi-9router/
-├── package.json              # pi.extensions + pi.skills
-├── index.ts                  # Extension: provider, tools, commands, events
-├── test.ts                   # E2E tests
-├── README.md
-└── skills/
-    ├── 9router/SKILL.md          # Entry point skill
-    ├── 9router-image/SKILL.md    # Image generation
-    ├── 9router-web-search/SKILL.md  # Web search
-    └── 9router-web-fetch/SKILL.md   # Web fetch
-```
+E2E needs explicit router credentials. Final cx vision/image generation E2E must enable cx in `pi9router.images.read` and `.generate`, and must fail if no cx image model is returned instead of using another provider.
 
 ## License
 
