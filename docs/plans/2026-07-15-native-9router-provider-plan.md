@@ -29,7 +29,7 @@ Expected: FAIL because `src/settings.ts` does not exist.
 
 **Step 3: Add test script only**
 
-Add `"test": "tsx --test tests/**/*.test.ts"` to `package.json`; add reusable temporary settings-file helper. Do not add production behavior yet.
+Add `"test": "npx tsx --test tests/**/*.test.ts"` to `package.json`; add reusable temporary settings-file helper. Do not add production behavior yet.
 
 **Step 4: Run test again**
 
@@ -180,7 +180,7 @@ Expected: FAIL because image module/tool registration is absent.
 
 **Step 3: Implement minimal image module/tool**
 
-Register `ninerouter_generate_image` with prompt, optional model, size, quality, and count. Resolve key through Pi-supported provider auth path; if Extension API cannot expose stored provider auth to tools, use an explicitly documented Pi API/extension-supported credential accessor rather than reading `auth.json` directly. Filter all choices through policy and call `/v1/images/generations` only after validation. Write returned image data to a user-visible safe output path and return supported image/text content.
+Register `ninerouter_generate_image` with prompt, optional model, size, quality, and count. Resolve key through Pi public `AuthStorage.create().get("9router")` credential access, checking the OAuth-shaped credential and using only its `access` field. Do not parse `auth.json` directly. Filter all choices through policy and call `/v1/images/generations` only after validation. Write returned image data to a user-visible safe output path and return supported image/text content.
 
 **Step 4: Run focused tests**
 
