@@ -48,7 +48,7 @@ const VERIFIED_CONTEXT_SPECS: readonly VerifiedContextSpec[] = [
   },
 ];
 
-const FALLBACK = { contextWindow: 32_000, maxTokens: 4_096 } as const;
+const FALLBACK = { contextWindow: 200_000, maxTokens: 4_096 } as const;
 
 function validLimit(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;

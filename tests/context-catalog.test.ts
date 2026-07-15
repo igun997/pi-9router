@@ -38,9 +38,9 @@ test("bundled catalog resolves exact verified model aliases", () => {
   assert.match(resolved.reference ?? "", /openai\.com/);
 });
 
-test("unknown models use conservative fallback", () => {
+test("unknown models use 200k context fallback", () => {
   assert.deepEqual(resolveModelContext({ id: "combo/unknown" }), {
-    contextWindow: 32_000,
+    contextWindow: 200_000,
     maxTokens: 4_096,
     source: "fallback",
   });
