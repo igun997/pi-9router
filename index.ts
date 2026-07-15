@@ -14,67 +14,13 @@
  *   NINE_ROUTER_PASSWORD - password (optional, some routers have no auth)
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { join, dirname } from "node:path";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { homedir } from "node:os";
-import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
-
-// Absolute path to this package directory (works on any machine).
-const PACKAGE_DIR = dirname(fileURLToPath(import.meta.url));
-
-// 9Router env vars this extension consumes. Canonical names first.
-const NINEROUTER_ENV_KEYS = [
-  "NINEROUTER_URL",
-  "NINEROUTER_KEY",
-  "NINE_ROUTER_URL",
-  "NINE_ROUTER_PASSWORD",
-  "NINE_ROUTER_API_KEY",
-] as const;
-
-/**
- * Pi does NOT load a settings.json `env` block into process.env. This
- * extension persists its config there (via /9r-setup), so it must inject
- * those values itself at startup before reading any env var.
- *
- * Reads global (~/.pi/agent/settings.json) then project (.pi/settings.json),
- * project winning. Only injects 9Router keys, and only when not already set
- * in the real environment (shell rc / CLI still take precedence).
- */
-function injectEnvFromSettings(cwd: string): void {
-  // Capture which keys exist in the real environment (shell rc / CLI) up front.
-  // Those always win; settings.json only fills gaps.
-  const shellHas = new Set(NINEROUTER_ENV_KEYS.filter((k) => process.env[k]));
-
-  // Merge global first, then project (project wins) into one resolved map.
-  const resolved: Record<string, string> = {};
-  const candidates = [
-    join(homedir(), ".pi", "agent", "settings.json"),
-    join(cwd, ".pi", "settings.json"),
-  ];
-  for (const path of candidates) {
-    if (!existsSync(path)) continue;
-    let parsed: any;
-    try {
-      parsed = JSON.parse(readFileSync(path, "utf-8"));
-    } catch {
-      continue; // malformed settings.json — skip gracefully
-    }
-    const env = parsed?.env;
-    if (!env || typeof env !== "object") continue;
-    for (const key of NINEROUTER_ENV_KEYS) {
-      const value = env[key];
-      if (typeof value === "string" && value) resolved[key] = value;
-    }
-  }
-
-  // Inject resolved settings values, but never override the real shell env.
-  for (const key of NINEROUTER_ENV_KEYS) {
-    if (!shellHas.has(key) && resolved[key]) {
-      process.env[key] = resolved[key];
-    }
-  }
-}
+import { RouterModel } from "./src/catalog.ts";
+import { loginNineRouter, LoginCallbacks } from "./src/login.ts";
+import { buildNineRouterProviderConfig } from "./src/provider.ts";
+import { loadNineRouterSettings, saveNineRouterBaseUrl } from "./src/settings.ts";
 
 interface RouterConfig {
   baseUrl: string;
@@ -227,7 +173,7 @@ async function quotaLinesForModel(config: RouterConfig, modelId: string): Promis
   return lines;
 }
 
-async function login(config: RouterConfig): Promise<string | null> {
+async function dashboardLogin(config: RouterConfig): Promise<string | null> {
   if (!config.password) return null;
 
   const res = await fetch(`${config.baseUrl}/api/auth/login`, {
@@ -254,7 +200,7 @@ async function apiGet(config: RouterConfig, path: string): Promise<any> {
   });
   if (res.status === 401 && config.password) {
     // Re-login on 401
-    config.token = (await login(config)) ?? undefined;
+    config.token = (await dashboardLogin(config)) ?? undefined;
     const retry = await fetch(`${config.baseUrl}${path}`, {
       headers: { Accept: "application/json", ...authHeaders(config.token ?? null) },
     });
@@ -274,7 +220,7 @@ async function apiPost(config: RouterConfig, path: string, body?: any): Promise<
     body: body ? JSON.stringify(body) : undefined,
   });
   if (res.status === 401 && config.password) {
-    config.token = (await login(config)) ?? undefined;
+    config.token = (await dashboardLogin(config)) ?? undefined;
     const retry = await fetch(`${config.baseUrl}${path}`, {
       method: "POST",
       headers: {
@@ -290,58 +236,63 @@ async function apiPost(config: RouterConfig, path: string, body?: any): Promise<
 }
 
 export default async function (pi: ExtensionAPI) {
-  // Pi does not load settings.json `env` into process.env; do it ourselves
-  // so /9r-setup persisted config works with no shell rc edits.
-  injectEnvFromSettings(process.cwd());
-
+  const globalSettingsPath = join(homedir(), ".pi", "agent", "settings.json");
+  const projectSettingsPath = join(process.cwd(), ".pi", "settings.json");
+  const settings = loadNineRouterSettings({
+    globalPath: globalSettingsPath,
+    projectPath: projectSettingsPath,
+  });
   const config: RouterConfig = {
-    baseUrl: process.env.NINEROUTER_URL ?? process.env.NINE_ROUTER_URL ?? "http://localhost:20128",
+    // Environment names remain compatibility fallback. New login persists only pi9router.baseUrl.
+    baseUrl: settings.baseUrl === "http://localhost:20128"
+      ? process.env.NINEROUTER_URL ?? process.env.NINE_ROUTER_URL ?? settings.baseUrl
+      : settings.baseUrl,
     password: process.env.NINE_ROUTER_PASSWORD,
   };
 
-  // Login if password provided
   if (config.password) {
-    config.token = (await login(config)) ?? undefined;
+    config.token = (await dashboardLogin(config)) ?? undefined;
   }
 
-  // Register as LLM provider (same as local-llm but with 9router branding)
+  let routerModels: RouterModel[] = [];
+  const discoverModels = async (baseUrl: string, apiKey?: string) => {
+    const response = await fetch(`${baseUrl}/v1/models`, {
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}`, Accept: "application/json" } : { Accept: "application/json" },
+    });
+    if (!response.ok) throw new Error(`9Router model discovery failed: ${response.status}`);
+    const payload = (await response.json()) as { data?: RouterModel[] };
+    routerModels = payload.data ?? [];
+  };
+
+  const registerProvider = () => {
+    const provider = buildNineRouterProviderConfig({
+      baseUrl: config.baseUrl,
+      models: routerModels,
+      readPolicy: settings.images.read,
+      contextOverrides: settings.context.models,
+      login: async (callbacks) => {
+        const credential = await loginNineRouter(callbacks as LoginCallbacks, {
+          defaultBaseUrl: config.baseUrl,
+          saveBaseUrl: (baseUrl) => {
+            saveNineRouterBaseUrl(globalSettingsPath, baseUrl);
+            config.baseUrl = baseUrl;
+          },
+          fetch,
+        });
+        await discoverModels(config.baseUrl, credential.access);
+        registerProvider();
+        return credential;
+      },
+    });
+    pi.registerProvider("9router", provider as any);
+  };
+
   try {
-    const response = await fetch(`${config.baseUrl}/v1/models`);
-    if (response.ok) {
-      const payload = (await response.json()) as {
-        data: Array<{
-          id: string;
-          name?: string;
-          context_window?: number;
-          max_tokens?: number;
-        }>;
-      };
-
-      const apiKey = process.env.NINEROUTER_KEY ?? process.env.NINE_ROUTER_API_KEY ?? "";
-      if (!apiKey) return; // apiKey required by pi; skip registration if not set
-
-      pi.registerProvider("9router", {
-        name: "9Router",
-        baseUrl: `${config.baseUrl}/v1`,
-        apiKey,
-        api: "openai-completions",
-        models: payload.data.map((model) => {
-          const ctx = resolveModelContext(model.id);
-          return {
-            id: model.id,
-            name: model.name ?? model.id,
-            reasoning: false,
-            input: ["text"],
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            contextWindow: model.context_window ?? ctx.contextWindow,
-            maxTokens: model.max_tokens ?? ctx.maxTokens,
-          };
-        }),
-      });
-    }
+    await discoverModels(config.baseUrl);
   } catch {
-    // Router not reachable - skip provider registration
+    // Keep native /login available while a remote router is offline or requires an API key.
   }
+  registerProvider();
 
   // Tool: List providers with status
   pi.registerTool({
@@ -526,192 +477,11 @@ export default async function (pi: ExtensionAPI) {
     }
   });
 
-  // Command: /9r-setup - interactive setup wizard
+  // Legacy entry point. Pi-native authentication lives in /login 9router.
   pi.registerCommand("9r-setup", {
-    description: "Setup wizard for 9Router: configure URL, password, API key",
+    description: "Show native 9Router login instructions",
     handler: async (_args, ctx) => {
-      // Step 1: URL
-      const url = await ctx.ui.input(
-        "9Router URL",
-        "Base URL of your 9Router instance",
-        config.baseUrl
-      );
-      if (!url) return;
-
-      // Step 2: Health check
-      ctx.ui.notify(`Testing ${url}...`, "info");
-      try {
-        const healthRes = await fetch(`${url}/api/health`);
-        const health = await healthRes.json();
-        if (!health.ok) {
-          ctx.ui.notify(`${url} responded but not healthy`, "error");
-          return;
-        }
-        ctx.ui.notify(`✓ ${url} is reachable`, "info");
-      } catch {
-        ctx.ui.notify(`✗ Cannot reach ${url}`, "error");
-        return;
-      }
-
-      // Step 3: Check if auth required
-      let authToken: string | null = null;
-      try {
-        const statusRes = await fetch(`${url}/api/auth/status`);
-        const status = await statusRes.json();
-
-        if (status.requireLogin) {
-          const password = await ctx.ui.input(
-            "Password",
-            `${url} requires login. Enter password:`,
-            ""
-          );
-          if (!password) return;
-
-          const loginRes = await fetch(`${url}/api/auth/login`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ password }),
-          });
-
-          if (!loginRes.ok) {
-            ctx.ui.notify("✗ Login failed. Wrong password?", "error");
-            return;
-          }
-
-          const setCookie = loginRes.headers.get("set-cookie") ?? "";
-          const match = setCookie.match(/auth_token=([^;]+)/);
-          authToken = match?.[1] ?? null;
-          ctx.ui.notify("✓ Logged in", "info");
-
-          // Save password to config
-          config.password = password;
-          config.token = authToken ?? undefined;
-          config.baseUrl = url;
-        } else {
-          ctx.ui.notify("No auth required on this instance", "info");
-          config.baseUrl = url;
-        }
-      } catch {
-        ctx.ui.notify("Could not check auth status", "error");
-        return;
-      }
-
-      // Step 4: Get/show API keys
-      let apiKey = "";
-      try {
-        const keysRes = await fetch(`${url}/api/keys`, {
-          headers: authToken ? { Cookie: `auth_token=${authToken}` } : {},
-        });
-        const keysData = await keysRes.json();
-        const keys = (keysData.keys ?? []).filter((k: any) => k.isActive);
-
-        if (keys.length > 0) {
-          const choices = keys.map((k: any) => `${k.name}: ${k.key}`);
-          choices.push("[Enter manually]");
-          const picked = await ctx.ui.select("Select API Key", choices);
-
-          if (picked === "[Enter manually]") {
-            apiKey = (await ctx.ui.input("API Key", "Enter your 9Router API key (sk-...)", "")) ?? "";
-          } else if (picked) {
-            apiKey = picked.split(": ")[1] ?? "";
-          }
-        } else {
-          apiKey = (await ctx.ui.input("API Key", "No keys found. Enter API key (or leave empty if not required):", "")) ?? "";
-        }
-      } catch {
-        apiKey = (await ctx.ui.input("API Key", "Could not fetch keys. Enter API key manually (or leave empty):", "")) ?? "";
-      }
-
-      // Step 5: Show config summary
-      const envObj: Record<string, string> = { NINEROUTER_URL: url };
-      if (config.password) envObj.NINE_ROUTER_PASSWORD = config.password;
-      if (apiKey) envObj.NINEROUTER_KEY = apiKey;
-
-      const envLines = [
-        `NINEROUTER_URL=${url}`,
-        config.password ? `NINE_ROUTER_PASSWORD=${config.password}` : null,
-        apiKey ? `NINEROUTER_KEY=${apiKey}` : null,
-      ].filter(Boolean);
-
-      const settingsJson = JSON.stringify({ packages: [PACKAGE_DIR], env: envObj }, null, 2);
-
-      const saveChoice = await ctx.ui.select("Save config to:", [
-        ".env (project)",
-        "~/.pi/agent/settings.json (global)",
-        "Show only (don't save)",
-      ]);
-
-      if (saveChoice === ".env (project)") {
-        const envPath = join(ctx.cwd, ".env");
-        const existing = existsSync(envPath) ? readFileSync(envPath, "utf-8") : "";
-        const newContent = existing
-          ? existing.replace(/^(NINE_ROUTER_|NINEROUTER_).*$/gm, "").trim() + "\n" + envLines.join("\n") + "\n"
-          : envLines.join("\n") + "\n";
-        writeFileSync(envPath, newContent);
-        ctx.ui.notify(`✓ Saved to ${envPath}`, "info");
-      } else if (saveChoice?.includes("settings.json")) {
-        const settingsPath = join(homedir(), ".pi", "agent", "settings.json");
-        let settings: any = {};
-        if (existsSync(settingsPath)) {
-          try {
-            settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-          } catch {}
-        }
-        settings.packages = settings.packages || [];
-        if (!settings.packages.includes(PACKAGE_DIR)) {
-          settings.packages.push(PACKAGE_DIR);
-        }
-        settings.env = settings.env || {};
-        settings.env.NINEROUTER_URL = url;
-        if (config.password) settings.env.NINE_ROUTER_PASSWORD = config.password;
-        if (apiKey) settings.env.NINEROUTER_KEY = apiKey;
-        writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
-        ctx.ui.notify(`✓ Saved to ${settingsPath}`, "info");
-      } else {
-        ctx.ui.notify(
-          `Config:\n${envLines.join("\n")}\n\nFor pi agent/settings.json:\n${settingsJson}`,
-          "info"
-        );
-      }
-
-      // Step 6: Verify models load + register provider live
-      try {
-        const modelsRes = await fetch(`${url}/v1/models`, {
-          headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
-        });
-        const payload = await modelsRes.json() as {
-          data: Array<{ id: string; name?: string; context_window?: number; max_tokens?: number }>;
-        };
-        const modelCount = payload.data?.length ?? 0;
-        ctx.ui.notify(`✓ ${modelCount} models available via 9router/`, "info");
-
-        // Register provider live so models are available immediately (no restart needed)
-        if (apiKey && modelCount > 0) {
-          pi.registerProvider("9router", {
-            name: "9Router",
-            baseUrl: `${url}/v1`,
-            apiKey,
-            api: "openai-completions",
-            models: payload.data.map((model) => {
-              const mctx = resolveModelContext(model.id);
-              return {
-                id: model.id,
-                name: model.name ?? model.id,
-                reasoning: false,
-                input: ["text"] as ("text" | "image")[],
-                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-                contextWindow: model.context_window ?? mctx.contextWindow,
-                maxTokens: model.max_tokens ?? mctx.maxTokens,
-              };
-            }),
-          });
-          ctx.ui.notify("✓ 9router provider registered — models available now (no restart needed)", "info");
-        } else if (!apiKey) {
-          ctx.ui.notify("⚠ No API key set — restart pi to load 9router models after saving config", "error");
-        }
-      } catch {
-        ctx.ui.notify("⚠ Could not verify models endpoint", "error");
-      }
+      ctx.ui.notify("Run /login 9router. It stores the API key in Pi auth.json and never writes .env.", "info");
     },
   });
 

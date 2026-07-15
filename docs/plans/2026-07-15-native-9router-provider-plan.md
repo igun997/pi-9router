@@ -270,7 +270,7 @@ git commit -m "docs: document native 9router provider setup"
 
 **Step 1: Write failing integration cases**
 
-Extend E2E test with authenticated model listing metadata checks and image endpoint coverage gated by explicit environment credentials. Keep default test runs secret-free and skip remote integration without credentials.
+Extend E2E test with authenticated model listing metadata checks and image endpoint coverage gated by explicit environment credentials. E2E fixture enables `cx` for native vision and image generation, selects only a discovered `cx` image model, and fails rather than silently substituting another provider. Keep default test runs secret-free and skip remote integration without credentials.
 
 **Step 2: Run targeted test to verify test behavior**
 

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { CapabilityRules } from "./policy.ts";
 
 export interface NineRouterSettings {
@@ -30,14 +30,18 @@ type RawSettings = {
 
 const EMPTY_RULES = { default: false, providers: {}, models: {} } as const;
 
-function readSettings(path: string): RawSettings {
+function readDocument(path: string): Record<string, unknown> {
   if (!existsSync(path)) return {};
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-    return parsed && typeof parsed === "object" ? (parsed as RawSettings) : {};
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
   } catch {
     return {};
   }
+}
+
+function readSettings(path: string): RawSettings {
+  return readDocument(path) as RawSettings;
 }
 
 function normalizeBaseUrl(value: unknown): string | undefined {
@@ -84,6 +88,18 @@ function normalizeContext(...sources: (RawSettings["pi9router"] | undefined)[]):
     }
   }
   return { models };
+}
+
+export function saveNineRouterBaseUrl(settingsPath: string, baseUrl: string): void {
+  const normalized = normalizeBaseUrl(baseUrl);
+  if (!normalized) throw new Error(`Invalid 9Router URL: ${baseUrl}`);
+  const document = readDocument(settingsPath);
+  const current = document.pi9router;
+  document.pi9router = {
+    ...(current && typeof current === "object" ? current : {}),
+    baseUrl: normalized,
+  };
+  writeFileSync(settingsPath, JSON.stringify(document, null, 2) + "\n");
 }
 
 export function loadNineRouterSettings(options: LoadSettingsOptions): NineRouterSettings {

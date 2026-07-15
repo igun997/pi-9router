@@ -26,4 +26,4 @@ Image access defaults deny. Public settings define provider defaults and model e
 
 Catalog refresh failures retain last-known catalog. Login failure leaves prior credentials unchanged. Image policy denials happen before outbound calls. Context resolution exposes its source and warns on fallback.
 
-Tests cover config precedence and validation, auth adapter login/logout behavior, catalog-to-model registration, capability gating, context precedence, image tool policy checks and responses, quota prompt behavior, and no inline quota subscription. README documents `/login 9router`, remote URL selection, public settings, and environment fallback.
+Tests cover config precedence and validation, auth adapter login/logout behavior, catalog-to-model registration, capability gating, context precedence, image tool policy checks and responses, quota prompt behavior, and no inline quota subscription. Final E2E explicitly enables the `cx` (Codex) route alias for native image vision and image generation; it must not silently substitute another provider. README documents `/login 9router`, remote URL selection, public settings, and environment fallback.
