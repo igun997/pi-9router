@@ -12,7 +12,7 @@ Legacy `NINEROUTER_*` and `NINE_ROUTER_*` process variables remain a lower-prior
 
 ## Model catalog, image policy, and context
 
-`/v1/models` provides model IDs and `owned_by`, but no reliable token limits. Catalog discovery uses `owned_by` as provider identity. A bundled, source-attributed verified context catalog provides exact/versioned limits; endpoint metadata wins when supplied, settings overrides win over both, and unknown models use conservative fallback. `/9r-model <id>` reports resolved limits and source.
+`/v1/models` provides model IDs and `owned_by`, but no reliable token limits. Catalog discovery uses canonical model identity plus `owned_by`; it never infers context/capability/quota solely from an ID route prefix. `cx` remains a Codex route alias when `owned_by` resolves it. A bundled, source-attributed verified context catalog provides exact/versioned limits; endpoint metadata wins when supplied, settings overrides win over both, and unknown models use conservative fallback. `/9r-model <id>` reports resolved limits and source.
 
 Image access defaults deny. Public settings define provider defaults and model exact/glob overrides separately for `read` and `generate`; model rules override provider rules. Read-approved models register `input: ["text", "image"]`, so Pi's standard `read`, pasted images, drag/drop, and `@image` flow stays native. Other models remain text-only. No image-reader interception tool exists.
 
