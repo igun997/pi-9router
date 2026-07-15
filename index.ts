@@ -13,11 +13,12 @@
  *   NINEROUTER_KEY - API key (from Dashboard → Keys)
  *   NINE_ROUTER_PASSWORD - password (optional, some routers have no auth)
  */
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { AuthStorage, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { Type } from "typebox";
 import { RouterModel } from "./src/catalog.ts";
+import { generateImage } from "./src/images.ts";
 import { loginNineRouter, LoginCallbacks } from "./src/login.ts";
 import { buildNineRouterProviderConfig } from "./src/provider.ts";
 import { loadNineRouterSettings, saveNineRouterBaseUrl } from "./src/settings.ts";
@@ -432,6 +433,59 @@ export default async function (pi: ExtensionAPI) {
         content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
         details: {},
       };
+    },
+  });
+
+  // Tool: Generate image through an explicitly allowed 9Router image model.
+  pi.registerTool({
+    name: "ninerouter_generate_image",
+    label: "9Router Generate Image",
+    description: "Generate an image with an allowed 9Router image model. Image policy denies all models until pi9router.images.generate enables them.",
+    parameters: Type.Object({
+      prompt: Type.String({ description: "Image generation prompt." }),
+      model: Type.Optional(Type.String({ description: "Allowed 9Router image model. Required when more than one allowed model exists." })),
+      size: Type.Optional(Type.String({ description: "Provider-supported image size." })),
+      quality: Type.Optional(Type.String({ description: "Provider-supported image quality." })),
+      n: Type.Optional(Type.Integer({ minimum: 1, maximum: 4, description: "Number of images." })),
+    }),
+    async execute(_toolCallId, params) {
+      const credential = AuthStorage.create().get("9router");
+      if (!credential || credential.type !== "oauth") {
+        return {
+          content: [{ type: "text", text: "9Router is not logged in. Run /login 9router." }],
+          details: { ok: false },
+          isError: true,
+        };
+      }
+      try {
+        const imageModelsResponse = await fetch(`${config.baseUrl}/v1/models/image`, {
+          headers: { Authorization: `Bearer ${credential.access}`, Accept: "application/json" },
+        });
+        if (!imageModelsResponse.ok) throw new Error(`9Router image model discovery failed: ${imageModelsResponse.status}`);
+        const imageModels = (await imageModelsResponse.json()) as { data?: RouterModel[] };
+        const result = await generateImage({
+          baseUrl: config.baseUrl,
+          apiKey: credential.access,
+          models: imageModels.data ?? [],
+          rules: settings.images.generate,
+          prompt: params.prompt,
+          model: params.model,
+          size: params.size,
+          quality: params.quality,
+          n: params.n,
+          fetch,
+        });
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          details: result,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
+          details: { ok: false },
+          isError: true,
+        };
+      }
     },
   });
 
