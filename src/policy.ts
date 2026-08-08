@@ -1,3 +1,11 @@
+/**
+ * Image *generation* policy. Generation spends provider credits and the router
+ * exposes no capability metadata on `/v1/models/image`, so it stays deny-by-default
+ * and operator-configured.
+ *
+ * Vision (image read) is not policy-controlled: it is taken from router
+ * `capabilities.vision`.
+ */
 export interface CapabilityRules {
   default?: boolean;
   providers?: Record<string, boolean>;

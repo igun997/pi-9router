@@ -3,8 +3,11 @@ import { CapabilityRules } from "./policy.ts";
 
 export interface NineRouterSettings {
   baseUrl: string;
+  /**
+   * Image generation policy only. Vision (image read) is not configurable:
+   * it comes from router `capabilities.vision`.
+   */
   images: {
-    read: Required<Pick<CapabilityRules, "default" | "providers" | "models">>;
     generate: Required<Pick<CapabilityRules, "default" | "providers" | "models">> & {
       defaultModel?: string;
     };
@@ -21,7 +24,6 @@ type RawSettings = {
   pi9router?: {
     baseUrl?: unknown;
     images?: {
-      read?: CapabilityRules;
       generate?: CapabilityRules;
     };
     context?: { models?: Record<string, { contextWindow?: unknown; maxTokens?: unknown }> };
@@ -106,13 +108,11 @@ export function loadNineRouterSettings(options: LoadSettingsOptions): NineRouter
   const global = readSettings(options.globalPath).pi9router;
   const project = readSettings(options.projectPath).pi9router;
   const baseUrl = normalizeBaseUrl(project?.baseUrl) ?? normalizeBaseUrl(global?.baseUrl) ?? "http://localhost:20128";
-  const read = normalizeRules(global?.images?.read, project?.images?.read);
   const generate = normalizeRules(global?.images?.generate, project?.images?.generate);
 
   return {
     baseUrl,
     images: {
-      read: { default: read.default ?? false, providers: read.providers ?? {}, models: read.models ?? {} },
       generate: {
         default: generate.default ?? false,
         providers: generate.providers ?? {},

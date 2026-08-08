@@ -20,7 +20,9 @@ test("direct key login validates remote URL and persists only public URL", async
     },
     {
       defaultBaseUrl: "http://localhost:20128",
-      saveBaseUrl: (url) => saved.push(url),
+      saveBaseUrl: (url) => {
+        saved.push(url);
+      },
       fetch: async (url, init) => {
         calls.push({ url: String(url), headers: init?.headers });
         return response({ data: [] });
