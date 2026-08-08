@@ -17,12 +17,11 @@ import { AuthStorage, type ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { Type } from "typebox";
+import { resolveCapabilities } from "./src/capabilities.ts";
 import { RouterModel } from "./src/catalog.ts";
-import { resolveModelContext } from "./src/context-catalog.ts";
 import { inspectRouterModel } from "./src/inspect.ts";
 import { generateImage } from "./src/images.ts";
 import { loginNineRouter, LoginCallbacks } from "./src/login.ts";
-import { resolveImageCapability } from "./src/policy.ts";
 import { buildNineRouterProviderConfig } from "./src/provider.ts";
 import { resolveQuotaProvider } from "./src/quota.ts";
 import { loadNineRouterSettings, saveNineRouterBaseUrl } from "./src/settings.ts";
@@ -185,7 +184,6 @@ export default async function (pi: ExtensionAPI) {
     const provider = buildNineRouterProviderConfig({
       baseUrl: config.baseUrl,
       models: routerModels,
-      readPolicy: settings.images.read,
       contextOverrides: settings.context.models,
       login: async (callbacks) => {
         const credential = await loginNineRouter(callbacks as LoginCallbacks, {
@@ -459,10 +457,13 @@ export default async function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("9r-settings", {
-    description: "Show resolved public 9Router URL, image policy, and context overrides",
+    description: "Show resolved public 9Router URL, image generation policy, and context overrides",
     handler: async (_args, ctx) => {
+      const vision = routerModels.filter((model) => model.capabilities?.vision === true).length;
       ctx.ui.notify(JSON.stringify({
         baseUrl: config.baseUrl,
+        models: routerModels.length,
+        visionModels: vision,
         images: settings.images,
         context: settings.context,
       }, null, 2), "info");
@@ -470,7 +471,7 @@ export default async function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("9r-model", {
-    description: "Inspect model context and image-read policy: /9r-model <model-id>",
+    description: "Inspect router-reported model capabilities: /9r-model <model-id>",
     handler: async (args, ctx) => {
       const modelId = args.trim();
       const model = routerModels.find((candidate) => candidate.id === modelId);
@@ -478,13 +479,13 @@ export default async function (pi: ExtensionAPI) {
         ctx.ui.notify(`Model not found: ${modelId || "(missing model id)"}`, "error");
         return;
       }
-      const context = resolveModelContext({
+      const capabilities = resolveCapabilities({
         id: model.id,
+        capabilities: model.capabilities,
         endpoint: model,
         overrides: settings.context.models,
       });
-      const allowed = resolveImageCapability(settings.images.read, { id: model.id, provider: model.owned_by });
-      ctx.ui.notify(inspectRouterModel(model, context, allowed), "info");
+      ctx.ui.notify(inspectRouterModel(model, capabilities), "info");
     },
   });
 

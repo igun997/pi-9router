@@ -1,6 +1,6 @@
 # pi-9router
 
-Pi package for [9Router](https://github.com/decolua/9router). Registers native `9router` provider, model catalog, management tools, strict image policy, and quota commands.
+Pi package for [9Router](https://github.com/decolua/9router). Registers native `9router` provider, capability-driven model catalog, management tools, image generation policy, and quota commands.
 
 ## Install
 
@@ -46,46 +46,91 @@ export NINEROUTER_KEY=sk-your-key
 
 New setup does not read or write project `.env` files.
 
-## Image policy
+## Vision (image read)
 
-All image access denies by default. Add public settings globally or per project:
+Vision comes from the router. `/v1/models` publishes a `capabilities` object per model:
+
+```json
+{
+  "id": "cx/gpt-5.5",
+  "owned_by": "cx",
+  "capabilities": {
+    "vision": true, "pdf": false, "audioInput": false, "videoInput": false,
+    "imageOutput": false, "audioOutput": false, "search": true, "tools": true,
+    "reasoning": true, "thinkingFormat": "openai", "thinkingCanDisable": true,
+    "thinkingRange": null, "contextWindow": 400000, "maxOutput": 128000
+  }
+}
+```
+
+Models with `capabilities.vision === true` register `input: ["text", "image"]`. That is the single pi-wide gate for image content, so every image path works on those models with no configuration:
+
+- built-in `read` tool on an image file
+- `@screenshot.png` attachments
+- terminal paste and drag/drop
+
+Models without vision stay text-only. Pi substitutes `(image omitted: model does not support images)` instead of failing the request.
+
+There is no image-read policy. The former `pi9router.images.read` allowlist is removed; the router is authoritative. Router metadata is sometimes conservative, and a model reported as `vision: false` is treated as text-only.
+
+## Image generation policy
+
+Generation spends provider credits and `/v1/models/image` publishes no capabilities, so it stays deny-by-default:
 
 ```json
 {
   "pi9router": {
     "baseUrl": "http://localhost:20128",
     "images": {
-      "read": {
-        "default": false,
-        "providers": { "cx": true },
-        "models": { "cx/gpt-4o": false }
-      },
       "generate": {
         "default": false,
         "providers": { "cx": true },
-        "defaultModel": "cx/gpt-image-1"
+        "models": { "cx/gpt-5.5-image": true },
+        "defaultModel": "cx/gpt-5.5-image"
       }
     }
   }
 }
 ```
 
-Rule precedence: exact model → model glob (`"cx/gpt-image-*"`) → `owned_by` provider → default deny.
+Rule precedence: exact model → model glob (`"cx/gpt-5.*-image"`) → `owned_by` provider → default deny.
 
-Allowed vision models register `input: ["text", "image"]`; Pi standard local `read`, paste, drag/drop, and `@image.png` send a base64 data URL directly to the selected vision model. `cx/gpt-5.5` accepts this native payload. No reader proxy tool exists.
+`ninerouter_generate_image` calls `/v1/models/image` then `/v1/images/generations`. It rejects unallowed models before any generation request.
 
-`ninerouter_generate_image` calls `/v1/models/image` then `/v1/images/generations`. It rejects unallowed models before any generation request. For cx-only operation, enable `cx` for both `read` and `generate`; no provider fallback occurs.
+## Model metadata
 
-## Context metadata
+Router capabilities map onto Pi model fields:
 
-9Router model responses may not include token limits. Resolution order:
+| 9Router capability | Pi model field |
+|---|---|
+| `vision` | `input: ["text", "image"]` |
+| `reasoning`, or `thinking` on reduced shapes | `reasoning` |
+| `contextWindow` / `maxOutput` | `contextWindow` / `maxTokens` |
+| `thinkingFormat` | `compat.thinkingFormat`, only for values Pi supports (`openai`, `qwen`, `zai`, `deepseek`, ...) |
+| `thinkingCanDisable: false` | `thinkingLevelMap: { "off": null }` |
+
+Router thinking formats Pi has no value for (`gemini-level`, `claude-adaptive`, `claude-budget`, `kimi`, `minimax`) are dropped, so Pi auto-detects instead of sending an invalid field.
+
+Context resolution order:
 
 1. `pi9router.context.models[model-id]` override
-2. Valid `context_window` and `max_tokens` from router response
-3. Bundled exact, vendor-source-attributed catalog
-4. Conservative `200k` context / `4k` output fallback
+2. `capabilities.contextWindow` and `capabilities.maxOutput`
+3. legacy `context_window` and `max_tokens` response fields
+4. conservative `200k` context / `4k` output fallback
 
-`/9r-model <id>` shows `owned_by`, context source, limits, reference, and image-read decision. Model identity plus discovered `owned_by` drives metadata; route prefix alone does not. `cx` maps to Codex for quota display only.
+Reduced router shapes land on the fallback: routes publishing only `{ thinking, agentic }`, and `combo` routes publishing no capabilities at all. Add a `pi9router.context.models` override for those.
+
+```json
+{
+  "pi9router": {
+    "context": {
+      "models": { "hemat": { "contextWindow": 200000, "maxTokens": 64000 } }
+    }
+  }
+}
+```
+
+`/9r-model <id>` shows `owned_by`, vision, reasoning, limits, context source, and thinking details. `cx` maps to Codex for quota display only.
 
 ## Commands
 
@@ -93,34 +138,8 @@ Allowed vision models register `input: ["text", "image"]`; Pi standard local `re
 |---|---|
 | `/9r` | Router health and active provider summary |
 | `/9r-quota [model-id]` | Quota check; prompts dashboard password for this invocation only |
-| `/9r-settings` | Show resolved public router settings and policies |
-| `/9r-model <model-id>` | Inspect context and native vision capability |
+| `/9r-settings` | Resolved router settings, model and vision counts, generation policy |
+| `/9r-model <model-id>` | Inspect router-reported capabilities for one model |
 | `/9r-setup` | Migration hint to `/login 9router` |
 
 No quota widget runs on model selection.
-
-## Tools
-
-| Tool | Description |
-|---|---|
-| `ninerouter_generate_image` | Generate image with policy-allowed model |
-| `ninerouter_health` | Health check |
-| `ninerouter_providers` | List provider connections |
-| `ninerouter_quota` | Usage data where admin auth is available |
-| `ninerouter_test` | Test provider connection |
-| `ninerouter_aliases` | List model aliases |
-| `ninerouter_settings` | Router settings |
-
-## Test
-
-Unit tests require no credentials:
-
-```bash
-npm test
-```
-
-E2E needs explicit router credentials. Final cx vision/image generation E2E uses a valid JPEG base64 data URL, enables cx in `pi9router.images.read` and `.generate`, and must fail if no cx image model is returned instead of using another provider.
-
-## License
-
-MIT

@@ -40,6 +40,31 @@ Response shape:
 ]}
 ```
 
+`/v1/models` entries usually carry a `capabilities` object. Filter on it instead of guessing from the model name:
+
+```json
+{ "vision": true, "pdf": false, "audioInput": false, "videoInput": false,
+  "imageOutput": false, "audioOutput": false, "search": true, "tools": true,
+  "reasoning": true, "thinkingFormat": "openai", "thinkingCanDisable": true,
+  "thinkingRange": null, "contextWindow": 400000, "maxOutput": 128000 }
+```
+
+```bash
+# vision-capable chat models
+curl -s $NINEROUTER_URL/v1/models | jq -r '.data[] | select(.capabilities.vision) | .id'
+```
+
+Two reduced shapes exist: some routes publish only `{ thinking, agentic }` with no limits, and `combo` routes publish no `capabilities` at all. Treat missing fields as unknown, not as `false` limits.
+
+Send images to a vision model with standard OpenAI content parts:
+
+```json
+{ "model": "cx/gpt-5.5", "messages": [{ "role": "user", "content": [
+  { "type": "text", "text": "What is in this image?" },
+  { "type": "image_url", "image_url": { "url": "data:image/jpeg;base64,..." } }
+]}]}
+```
+
 ## Capability skills
 
 When the user needs a specific capability, read the relevant skill from this extension's skills directory:
